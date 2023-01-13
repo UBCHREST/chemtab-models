@@ -1,0 +1,55 @@
+name: Pull Request Workflow
+
+on:
+  # Run tests for any PRs.
+  pull_request:
+    branches:
+      - main
+
+# only allow one test per PR to be run
+concurrency:
+  group: ${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  test-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [ { cc: gcc, cxx: g++, id: -gcc }, { cc: clang, cxx: clang++, id: -clang } ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Building tests
+        run: |
+          ABLATE_DEPENDENCY_IMAGE=ghcr.io/ubchrest/ablate/ablate-dependencies${{matrix.compiler.id}}:latest
+
+          docker buildx build .\
+            --file Dockerfile \
+            --tag chemtab-test-image-${{matrix.compiler.id}} \
+            --build-arg ABLATE_DEPENDENCY_IMAGE=$ABLATE_DEPENDENCY_IMAGE \
+            --load 
+
+      - name: Run tests
+        run: docker run --rm chemtab-test-image-${{matrix.compiler.id}}
+
+  test:
+    runs-on: ubuntu-latest
+    needs: test-matrix
+    if: ${{ always() }}
+    steps:
+      - name: Check on failures
+        if: needs.test-matrix.result != 'success'
+        run: |
+          echo Tests unsuccessful!
+          exit 1
+      - run: echo All tests Successful!
